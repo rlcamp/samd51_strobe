@@ -14,7 +14,7 @@
  is nondeterministic, which usually results in the MSB being garbled */
 __attribute__((noinline, section(".datafunc")))
 static void single_ws2812_set_grb(const uint32_t grb) {
-    /* 83 ns is the gcd of the 3 delays we need, at both CPU speeds we use */
+    /* 166 ns is the gcd of the 3 delays we need, at both CPU speeds we use */
 #if F_CPU >= 120000000
 #define NOPS_166NS "nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;nop;"
 #elif F_CPU == 48000000
