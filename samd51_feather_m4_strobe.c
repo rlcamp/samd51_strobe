@@ -41,8 +41,6 @@ static void single_ws2812_set_grb(const uint32_t grb) {
             PORT->Group[1].OUTSET.reg = 1U << 3;
 
             /* datasheet says 350 +/- 150 ns, empirically > 33 and < 500 ns */
-            /* on the first call after waking from deep sleep, we can apparently be running
-             slow here, so do fewer than the otherwise necessary nops */
             asm volatile(NOPS_166NS NOPS_166NS :::);
 
             PORT->Group[1].OUTCLR.reg = 1U << 3;
