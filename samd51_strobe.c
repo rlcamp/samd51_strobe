@@ -17,7 +17,7 @@ int main(void) {
     /* reduce idle power consumption since we are just going to sleep forever outside isr */
     PM->SLEEPCFG.bit.SLEEPMODE = PM_SLEEPCFG_SLEEPMODE_STANDBY_Val;
 
-    strobe_start(0);
+    strobe_start();
 
     while (1) __WFE();
 }

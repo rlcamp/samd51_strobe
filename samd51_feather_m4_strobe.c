@@ -119,13 +119,15 @@ static void tc3_init(void) {
     while (TC3->COUNT8.SYNCBUSY.bit.ENABLE);
 }
 
-void strobe_start(unsigned idle_grb_input) {
+void strobe_start(void) {
     /* prepare pin for output, initially low */
     PORT->Group[1].DIRSET.reg = 1U << 3;
     PORT->Group[1].OUTCLR.reg = 1U << 3;
 
-    idle_grb = idle_grb_input;
-
     /* safe to elide delay here because it will be one tc3 tick before the first write */
     tc3_init();
+}
+
+void strobe_set_idle_color(unsigned idle_grb_input) {
+    idle_grb = idle_grb_input;
 }
