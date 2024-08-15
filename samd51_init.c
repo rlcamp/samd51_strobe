@@ -21,27 +21,18 @@
  deviation from cmsis: these are the symbol names provided by the adafruit linker script,
  with which we want to remain compatible */
 
-extern uint32_t __etext; /* address of this is where data goes in RAM */
-extern uint32_t __data_start__, __data_end__; /* addresses of these are where data comes from in flash */
-extern uint32_t __bss_start__, __bss_end__; /* addresses of these are where bss goes in RAM */
-extern uint32_t __StackTop; /* address of this is the initial value of the stack pointer */
+extern unsigned char __etext[]; /* where data comes from in flash */
+extern unsigned char __data_start__[], __data_end__[]; /* where data goes in RAM */
+extern unsigned char __bss_start__[], __bss_end__[]; /* where bss goes in RAM */
 
 /* execution nominally starts here on reset (actually when exiting bootloader) */
-void Reset_Handler(void) {
-    uint32_t * data_start = &__data_start__, * data_end = &__data_end__;
-    uint32_t * bss_start = &__bss_start__, * bss_end = &__bss_end__;
-    uint32_t * etext = &__etext;
-
-    /* pointer laundering, since otherwise the compares and subtracts below would be UB */
-    asm volatile("" : "+r"(data_start), "+r"(data_end), "+r"(bss_start), "+r"(bss_end), "+r"(etext) ::);
-
+__attribute((noreturn)) void Reset_Handler(void) {
     /* copy data section from flash to sram */
-    const unsigned size_to_copy = sizeof(uint32_t) * (data_end - data_start);
-    if (etext != data_start && size_to_copy)
-        __builtin_memcpy(data_start, etext, size_to_copy);
+    if ((uintptr_t)__etext != (uintptr_t)__data_start__)
+        __builtin_memcpy(__data_start__, __etext, (uintptr_t)__data_end__ - (uintptr_t)__data_start__);
 
     /* clear the bss section in sram */
-    __builtin_memset(bss_start, 0, sizeof(uint32_t) * (bss_end - bss_start));
+    __builtin_memset(__bss_start__, 0, (uintptr_t)__bss_end__ - (uintptr_t)__bss_start__);
 
     /* enable floating point and flush state */
     SCB->CPACR |= (0xFu << 20);
@@ -58,7 +49,7 @@ void Reset_Handler(void) {
 
     /* note that this can be the default arduino main but should NOT be the adafruit main,
      which expects to call the above two functions internally. if using this within adafruit
-     core, you must override main(), otherwise constructors will be called twice */
+     core, you MUST also override main(), otherwise constructors will be called twice */
     extern int main(void);
     main();
 
@@ -67,10 +58,10 @@ void Reset_Handler(void) {
 }
 
 /* default dummy handler, hangs forever if encountered */
-void Dummy_Handler(void) { while (1) __WFI(); }
+static void Dummy_Handler(void) { while (1) __WFI(); }
 
 /* default empty handler, returns harmless if encountered */
-void Empty_Handler(void) { }
+static void Empty_Handler(void) { }
 
 /* upstream cmsis calls this NonMaskableInt_Handler, TODO: support both symbol names? */
 __attribute__ ((weak, alias("Dummy_Handler"))) void NMI_Handler(void);
@@ -229,7 +220,7 @@ __attribute__ ((weak, alias("Dummy_Handler"))) void SDHC1_Handler(void);
 /* deviation from upstream cmsis: this is in .isr_vector instead of .vectors */
 __attribute__((used, section(".isr_vector"))) const DeviceVectors exception_table = {
     /* initial stack pointer */
-    .pvStack = (void *)(&__StackTop),
+    .pvStack = (void *)(uintptr_t)(HSRAM_ADDR + HSRAM_SIZE),
 
     /* cortex-m4 handlers */
     .pfnReset_Handler = (void *)Reset_Handler, /* this table entry defines where pc starts */
@@ -432,25 +423,29 @@ static void switch_cpu_to_32kHz(void) {
     OSC32KCTRL->OSCULP32K.bit.EN32K = 1;
 #else
     /* enable 32 kHz xtal oscillator */
-    OSC32KCTRL->XOSC32K.reg = OSC32KCTRL_XOSC32K_ENABLE | OSC32KCTRL_XOSC32K_EN1K | OSC32KCTRL_XOSC32K_EN32K | OSC32KCTRL_XOSC32K_CGM_XT | OSC32KCTRL_XOSC32K_XTALEN;
-    while ((OSC32KCTRL->STATUS.reg & OSC32KCTRL_STATUS_XOSC32KRDY) == 0);
+    OSC32KCTRL->XOSC32K.reg = (OSC32KCTRL_XOSC32K_Type) { .bit = {
+        .ENABLE = 1, .EN1K = 1, .EN32K = 1,
+        .CGM = OSC32KCTRL_XOSC32K_CGM_XT_Val,
+        .XTALEN = 1
+    }}.reg;
+    while (!OSC32KCTRL->STATUS.bit.XOSC32KRDY);
 #endif
 
     /* reset gclk peripheral */
     GCLK->CTRLA.bit.SWRST = 1;
-    while (GCLK->SYNCBUSY.reg & GCLK_SYNCBUSY_SWRST);
+    while (GCLK->SYNCBUSY.bit.SWRST);
 
     /* one or the other of the 32 kHz oscillators will be generic clock generator 3 */
 #ifndef CRYSTALLESS
-    GCLK->GENCTRL[3].reg = GCLK_GENCTRL_SRC(GCLK_GENCTRL_SRC_XOSC32K) | GCLK_GENCTRL_GENEN;
+    GCLK->GENCTRL[3].reg = (GCLK_GENCTRL_Type) { .bit = { .SRC = GCLK_GENCTRL_SRC_XOSC32K_Val, .GENEN = 1 }}.reg;
 #else
-    GCLK->GENCTRL[3].reg = GCLK_GENCTRL_SRC(GCLK_GENCTRL_SRC_OSCULP32K) | GCLK_GENCTRL_GENEN;
+    GCLK->GENCTRL[3].reg = (GCLK_GENCTRL_Type) { .bit = { .SRC = GCLK_GENCTRL_SRC_OSCULP32K_Val, .GENEN = 1 }}.reg;
 #endif
 
-    while (GCLK->SYNCBUSY.reg & GCLK_SYNCBUSY_GENCTRL3);
+    while (GCLK->SYNCBUSY.bit.GENCTRL3);
 
     /* temporarily use the ulp oscillator for generic clock 0 */
-    GCLK->GENCTRL[0].reg = GCLK_GENCTRL_SRC(GCLK_GENCTRL_SRC_OSCULP32K) | GCLK_GENCTRL_GENEN;
+    GCLK->GENCTRL[0].reg = (GCLK_GENCTRL_Type) { .bit = { .SRC = GCLK_GENCTRL_SRC_OSCULP32K_Val, .GENEN = 1 }}.reg;
     while (GCLK->SYNCBUSY.reg & GCLK_SYNCBUSY_GENCTRL0);
 }
 
@@ -459,13 +454,13 @@ static void switch_cpu_from_32kHz_to_fast(void) {
 
     OSCCTRL->DFLLCTRLA.reg = 0;
 
-    OSCCTRL->DFLLMUL.reg = OSCCTRL_DFLLMUL_CSTEP(0x1) | OSCCTRL_DFLLMUL_FSTEP(0x1) | OSCCTRL_DFLLMUL_MUL(0);
+    OSCCTRL->DFLLMUL.reg = (OSCCTRL_DFLLMUL_Type) { .bit = { .CSTEP = 0x1, .FSTEP = 0x1, .MUL = 0 }}.reg;
     while (OSCCTRL->DFLLSYNC.reg & OSCCTRL_DFLLSYNC_DFLLMUL);
 
     OSCCTRL->DFLLCTRLB.reg = 0;
     while (OSCCTRL->DFLLSYNC.reg & OSCCTRL_DFLLSYNC_DFLLCTRLB);
 
-    OSCCTRL->DFLLCTRLA.reg |= OSCCTRL_DFLLCTRLA_ENABLE;
+    OSCCTRL->DFLLCTRLA.bit.ENABLE = 1;
     while (OSCCTRL->DFLLSYNC.reg & OSCCTRL_DFLLSYNC_ENABLE);
 
     /* chip errata 2.8.3 workaround says to set dfllmul, then clear ctrlb to select open loop, then
@@ -473,35 +468,35 @@ static void switch_cpu_from_32kHz_to_fast(void) {
     OSCCTRL->DFLLVAL.reg = OSCCTRL->DFLLVAL.reg;
     while (OSCCTRL->DFLLSYNC.bit.DFLLVAL);
 
-    OSCCTRL->DFLLCTRLB.reg = OSCCTRL_DFLLCTRLB_WAITLOCK | OSCCTRL_DFLLCTRLB_CCDIS | OSCCTRL_DFLLCTRLB_USBCRM;
+    OSCCTRL->DFLLCTRLB.reg = (OSCCTRL_DFLLCTRLB_Type) { .bit = { .WAITLOCK = 1, .CCDIS = 1 }}.reg;
     while (!OSCCTRL->STATUS.bit.DFLLRDY);
 
     if (48000000 == F_CPU)
     /* use the 48 MHz clock for the cpu */
-        GCLK->GENCTRL[0].reg = GCLK_GENCTRL_SRC(GCLK_GENCTRL_SRC_DFLL) | GCLK_GENCTRL_IDC | GCLK_GENCTRL_GENEN;
+        GCLK->GENCTRL[0].reg = (GCLK_GENCTRL_Type) { .bit = { .SRC = GCLK_GENCTRL_SRC_DFLL_Val, .GENEN = 1 }}.reg;
     else {
         /* divide by 48 to get a 1 MHz clock for generic clock generator 5 */
-        GCLK->GENCTRL[5].reg = GCLK_GENCTRL_SRC(GCLK_GENCTRL_SRC_DFLL_Val) | GCLK_GENCTRL_GENEN | GCLK_GENCTRL_DIV(48u);
+        GCLK->GENCTRL[5].reg = (GCLK_GENCTRL_Type) { .bit = { .SRC = GCLK_GENCTRL_SRC_DFLL_Val, .GENEN = 1, .DIV = 48U }}.reg;
         while (GCLK->SYNCBUSY.bit.GENCTRL5);
 
         /* set up fdpll0 at F_CPU (120 MHz) */
-        GCLK->PCHCTRL[OSCCTRL_GCLK_ID_FDPLL0].reg = (1 << GCLK_PCHCTRL_CHEN_Pos) | GCLK_PCHCTRL_GEN(GCLK_PCHCTRL_GEN_GCLK5_Val);
+        GCLK->PCHCTRL[OSCCTRL_GCLK_ID_FDPLL0].reg = (GCLK_PCHCTRL_Type) { .bit = { .GEN = GCLK_PCHCTRL_GEN_GCLK5_Val, .CHEN = 1 }}.reg;
 
-        OSCCTRL->Dpll[0].DPLLRATIO.reg = OSCCTRL_DPLLRATIO_LDRFRAC(0x00) | OSCCTRL_DPLLRATIO_LDR((F_CPU - 500000) / 1000000);
+        OSCCTRL->Dpll[0].DPLLRATIO.reg = (OSCCTRL_DPLLRATIO_Type) { .bit = { .LDRFRAC = 0x00, .LDR = (F_CPU - 500000) / 1000000 }}.reg;
         while (OSCCTRL->Dpll[0].DPLLSYNCBUSY.bit.DPLLRATIO);
 
         /* must use lbypass due to chip errata 2.13.1 */
-        OSCCTRL->Dpll[0].DPLLCTRLB.reg = OSCCTRL_DPLLCTRLB_REFCLK_GCLK | OSCCTRL_DPLLCTRLB_LBYPASS;
+        OSCCTRL->Dpll[0].DPLLCTRLB.reg = (OSCCTRL_DPLLCTRLB_Type) { .bit = { .REFCLK = OSCCTRL_DPLLCTRLB_REFCLK_GCLK_Val, . LBYPASS = 1 }}.reg;
 
-        OSCCTRL->Dpll[0].DPLLCTRLA.reg = OSCCTRL_DPLLCTRLA_ENABLE;
+        OSCCTRL->Dpll[0].DPLLCTRLA.reg = (OSCCTRL_DPLLCTRLA_Type) { .bit.ENABLE = 1 }.reg;
         while (OSCCTRL->Dpll[0].DPLLSTATUS.bit.CLKRDY == 0 || OSCCTRL->Dpll[0].DPLLSTATUS.bit.LOCK == 0);
 
         /* 48 MHz clock, required for usb and many other things */
-        GCLK->GENCTRL[1].reg = GCLK_GENCTRL_SRC(GCLK_GENCTRL_SRC_DFLL_Val) | GCLK_GENCTRL_IDC | GCLK_GENCTRL_GENEN;
+        GCLK->GENCTRL[1].reg = (GCLK_GENCTRL_Type) { .bit = { .SRC = GCLK_GENCTRL_SRC_DFLL_Val, .GENEN = 1, .IDC = 1 }}.reg;
         while (GCLK->SYNCBUSY.reg & GCLK_SYNCBUSY_GENCTRL1);
 
         /* use the 120 MHz clock for the cpu */
-        GCLK->GENCTRL[0].reg = GCLK_GENCTRL_SRC(GCLK_GENCTRL_SRC_DPLL0) | GCLK_GENCTRL_IDC | GCLK_GENCTRL_GENEN;
+        GCLK->GENCTRL[0].reg = (GCLK_GENCTRL_Type) { .bit = { .SRC = GCLK_GENCTRL_SRC_DPLL0_Val, .GENEN = 1, .IDC = 1 }}.reg;
     }
 
     while (GCLK->SYNCBUSY.reg & GCLK_SYNCBUSY_GENCTRL0);
@@ -556,7 +551,13 @@ void SystemInit(void) {
         .TRANSP = (*((uint32_t *)USB_FUSES_TRANSP_ADDR) & USB_FUSES_TRANSP_Msk) >> USB_FUSES_TRANSP_Pos,
         .TRIM = (*((uint32_t *)USB_FUSES_TRIM_ADDR) & USB_FUSES_TRIM_Msk) >> USB_FUSES_TRIM_Pos
     }}.reg;
+
+    /* explicitly disable usb just in case the bootloader left it enabled */
+    USB->DEVICE.CTRLA.bit.ENABLE = 0;
 }
 
-/* newlib expects to be able to call this */
+/* silence compiler warning about no previous prototype */
+extern void _init(void);
+
+/* newlib calls this from within __libc_init_array */
 __attribute((weak)) void _init(void) { }
