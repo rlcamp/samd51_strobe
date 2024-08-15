@@ -102,6 +102,9 @@ static void tc3_init(void) {
         .RUNSTDBY = 1 /* run in stdby */
     }}.reg;
 
+    /* set initial value to one tick before rollover */
+    TC3->COUNT8.COUNT.reg = 127;
+
     /* count to 4 seconds and roll over */
     TC3->COUNT8.PER.reg = 127;
 
@@ -128,6 +131,21 @@ void strobe_start(void) {
     tc3_init();
 }
 
+void strobe_stop(void) {
+    PORT->Group[1].DIRCLR.reg = 1U << 3;
+    PORT->Group[1].OUTCLR.reg = 1U << 3;
+
+    TC3->COUNT8.CTRLA.bit.ENABLE = 0;
+    while (TC3->COUNT8.SYNCBUSY.bit.ENABLE);
+
+    GCLK->PCHCTRL[TC3_GCLK_ID].reg = (GCLK_PCHCTRL_Type) { .bit.CHEN = 0 }.reg;
+    while (GCLK->SYNCBUSY.reg);
+
+    MCLK->APBBMASK.bit.TC3_ = 0;
+}
+
 void strobe_set_idle_color(unsigned idle_grb_input) {
+    if (idle_grb_input != idle_grb)
+        single_ws2812_set_grb(idle_grb_input);
     idle_grb = idle_grb_input;
 }
