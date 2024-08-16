@@ -12,7 +12,7 @@
 
 /* this function MUST live in .data, otherwise instruction timing after wake from deep sleep
  is nondeterministic, which usually results in the MSB being garbled */
-__attribute__((noinline, section(".datafunc")))
+__attribute__((noinline, section(".ramfunc")))
 static void single_ws2812_set_grb(const uint32_t grb) {
     /* 166 ns is the gcd of the 3 delays we need, at both CPU speeds we use */
 #if F_CPU >= 120000000
